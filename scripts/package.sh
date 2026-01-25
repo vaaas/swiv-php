@@ -1,6 +1,6 @@
 #!/bin/sh
 name=swiv
-version=1.0
+version=1.0.1
 
 # files
 mkdir -p $name/usr/bin
