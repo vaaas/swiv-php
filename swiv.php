@@ -1,11 +1,11 @@
 #!/usr/bin/env php
 <?php
 if (php_sapi_name() === 'cli') {
-    $options = getopt('', ['dir:', 'auth:']);
+    $options = getopt('', ['dir:', 'auth:', 'host:']);
     chdir($options['dir']);
     pcntl_exec(
         "/usr/bin/env",
-        ["php", "-S", "localhost:8000", __FILE__],
+        ["php", "-S", $options['host'], __FILE__],
         ['AUTH' => $options['auth']]
     );
     exit();

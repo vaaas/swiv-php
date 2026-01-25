@@ -2,7 +2,7 @@
 Description=simple web image viewer
 
 [Service]
-ExecStart=/usr/bin/swiv --dir /path/to/directory --auth user:password
+ExecStart=/usr/bin/swiv --dir /path/to/directory --host 0.0.0.0:1000 --auth user:password
 
 [Install]
 WantedBy=multi-user.target

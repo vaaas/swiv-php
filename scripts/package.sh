@@ -18,6 +18,7 @@ Description: simple web image viewer
 Architecture: all
 Version: $version
 Maintainer: Vasileios Pasialiokis <vas@tsuku.ro>
+Depends: php-cli
 EOF
 
 dpkg-deb --root-owner-group -b $name
