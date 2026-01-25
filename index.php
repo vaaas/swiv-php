@@ -75,6 +75,25 @@ class Arr implements IteratorAggregate
      {
          return implode($separator, $this->xs);
      }
+
+     /** @return Arr<T> */
+     public function sortBy(callable $f): Arr
+     {
+         $copy = [...$this->xs];
+         usort($copy, $f);
+         return Arr::of($copy);
+     }
+
+     /** @return T|null */
+     public function at(int $x): mixed
+     {
+         return array_key_exists($x, $this->xs) ? $this->xs[$x] : null;
+     }
+
+     public function length(): int
+     {
+         return count($this->xs);
+     }
 }
 
 /**
@@ -102,13 +121,6 @@ class Iter implements IteratorAggregate
         foreach ($this->xs as $x) yield $x;
     }
 
-    /** @return T | null */
-    public function first(): mixed
-    {
-        foreach ($this->xs as $x) return $x;
-        return null;
-    }
-
     /**
      * @param callable(T): bool $f
      * @return Iter<T>
@@ -121,6 +133,12 @@ class Iter implements IteratorAggregate
                 if ($f($x)) yield $x;
             }
         });
+    }
+
+    /** @return Arr<T> */
+    public function materialise(): Arr
+    {
+        return Arr::of([...$this->xs]);
     }
 }
 
@@ -189,7 +207,7 @@ class Dir
         foreach ($entries as $entry)
         {
             if ($entry instanceof Dir)
-                yield from $entry->scan();
+                yield from $entry->walk();
             else
                 yield $entry;
         }
@@ -220,11 +238,21 @@ class File
     }
 }
 
+function alphabetically(Dir | File $a, Dir | File $b): int
+{
+    return strcmp($a->pathname, $b->pathname);
+}
+
 class Request
 {
     public function pathname(): string
     {
-        return urldecode($_SERVER['REQUEST_URI']);
+        return urldecode(strtok($_SERVER["REQUEST_URI"], '?'));
+    }
+
+    public function get(string $key): string
+    {
+        return $_GET[$key] ?: '';
     }
 }
 
@@ -250,16 +278,27 @@ class Response
     }
 }
 
-class DirectoryView
+class GalleryView
 {
     public function __construct(private string $base) {}
 
     public function render(Dir $dir): string
     {
-        $body= $dir->scan()
-                   ->map($this->renderEntry(...))
-                   ->join("\n");
-        return $this->layout($body);
+        return $this->layout($this->navbar() . $this->contents($dir));
+    }
+
+    private function contents(Dir $dir): string
+    {
+        return $dir->scan()->map($this->renderEntry(...))->join('');
+    }
+
+    private function navbar(): string
+    {
+        return <<<EOF
+            <nav>
+                <a href="?mode=viewer">👁</a>
+            </nav>
+        EOF;
     }
 
     private function stylesheet() {
@@ -286,7 +325,11 @@ class DirectoryView
                 position: relative;
                 overflow: hidden;
             }
-            a { all: unset; }
+            a {
+                color: inherit;
+                text-decoration: inherit;
+                cursor: pointer;
+            }
             article img {
                 width: 100%;
                 height: 100%;
@@ -299,6 +342,18 @@ class DirectoryView
                 bottom: 0;
                 padding: 0.5em;
                 background: #0008;
+            }
+            nav {
+                position: absolute;
+                bottom: 0;
+                right: 0;
+                background: orange;
+                z-index: 1000;
+                border-radius: 0.5em;
+            }
+            nav a {
+                display: block;
+                padding: 1em;
             }
         EOD;
     }
@@ -330,18 +385,22 @@ class DirectoryView
 
     private function renderDir(Dir $dir): string
     {
-        /** @var File|null */
-        $firstFile = (new Iter($dir->walk()))
+        /** @var Arr<File> */
+        $files = (new Iter($dir->walk()))
             ->filter(fn($x) => $x instanceof File)
-            ->first();
+            ->materialise()
+            ->sortBy(alphabetically(...));
+        $firstFile = $files->at(0);
         if (is_null($firstFile)) return '';
+        $count = $files->length();
+        $label = "{$dir->basename()} ({$count})";
         $src = Path::relativeTo($this->base, $firstFile->pathname);
         $href = Path::relativeTo($this->base, $dir->pathname);
         return <<<EOF
             <article>
                 <a href="{$href}">
                     <img src="{$src}" loading='lazy'>
-                    <label>{$dir->basename()}</label>
+                    <label>{$label}</label>
                 </a>
             </article>
         EOF;
@@ -358,6 +417,70 @@ class DirectoryView
     }
 }
 
+class ImageView
+{
+    public function __construct(private string $base) {}
+
+    public function render(Dir $dir): string
+    {
+        $body = (new Iter($dir->walk()))
+            ->filter(fn($x) => $x instanceof File)
+            ->materialise()
+            ->sortBy(alphabetically(...))
+            ->map($this->renderEntry(...))
+            ->join('');
+        return $this->layout($body);
+    }
+
+    private function stylesheet() {
+        return <<<EOD
+            html {
+                background: black;
+                color: white;
+                overflow: hidden;
+            }
+            body {
+                margin: 0;
+                display: flex;
+                height: 100vh;
+                overflow-x: scroll;
+                scrollbar-width: none;
+                scroll-snap-type: x proximity;
+            }
+            img {
+                height: 100vh;
+                width: 100vw;
+                object-fit: contain;
+                scroll-snap-align: center;
+            }
+        EOD;
+    }
+
+    private function layout(string $body): string
+    {
+        $style = $this->stylesheet();
+        return <<<EOD
+            <html>
+                <head>
+                    <meta charset='utf-8'>
+                    <meta name='viewport' content='width=device-width, initial-scale=1' />
+                    <title>swiv</title>
+                    <style>{$style}</style>
+                </head>
+                <body>{$body}</body>
+            </html>
+        EOD;
+    }
+
+    private function renderEntry(File $file): string
+    {
+        $src = Path::relativeTo($this->base, $file->pathname);
+        return <<<EOF
+            <img src="{$src}" loading='lazy'>
+        EOF;
+    }
+}
+
 class App
 {
     public function __construct(private readonly string $base) {}
@@ -367,12 +490,15 @@ class App
         $request  = new Request();
         $pathname = $this->base . $request->pathname();
         $entry    = parsePathname($pathname);
-        if ($entry instanceof Dir)
+        if ($entry instanceof Dir) {
+            $mode = $request->get('mode');
+            $view = $mode === 'viewer' ? new ImageView($this->base) : new GalleryView($this->base);
             $response = new Response(
                 200,
                 ['Content-Type' => 'text/html'],
-                (new DirectoryView($this->base)->render($entry))
+                $view->render($entry)
             );
+        }
         else if ($entry instanceof File)
             $response = new Response(
                 200,
