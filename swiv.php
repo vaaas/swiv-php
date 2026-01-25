@@ -1,9 +1,12 @@
 <?php
 if (php_sapi_name() === 'cli') {
-    $dir = $argv[1];
-    $script = __FILE__;
-    chdir($dir);
-    pcntl_exec("/usr/bin/php", ["-S", "localhost:8000", __FILE__]);
+    $options = getopt('', ['dir:', 'auth:']);
+    chdir($options['dir']);
+    pcntl_exec(
+        "/usr/bin/php",
+        ["-S", "localhost:8000", __FILE__],
+        ['AUTH' => $options['auth']]
+    );
     exit();
 }
 
@@ -254,6 +257,11 @@ class Request
     {
         return $_GET[$key] ?: '';
     }
+
+    public function header(string $key): string
+    {
+        return $_SERVER['HTTP_' . $key] ?: '';
+    }
 }
 
 class Response
@@ -267,13 +275,36 @@ class Response
         public readonly array           $headers,
         public readonly string|iterable $body,
     ) {}
+}
 
-    public static function badRequest(): self
+interface Respondable
+{
+    public function getResponse(): Response;
+}
+
+class BadRequest extends Error implements Respondable
+{
+    public function getResponse(): Response
     {
         return new Response(
             400,
             ['Content-Type' => 'text/plain'],
             'Bad request',
+        );
+    }
+}
+
+class Unauthorised extends Error implements Respondable
+{
+    public function getResponse(): Response
+    {
+        return new Response(
+            401,
+            [
+                'Content-Type' => 'text/plain',
+                'WWW-Authenticate' => 'Basic realm="swiv"',
+            ],
+            'Unauthorized',
         );
     }
 }
@@ -482,32 +513,61 @@ class ImageView
     }
 }
 
+class Router {
+    public function __construct(private string $base) {}
+
+    public function route(Request $request) {
+        try {
+            $this->authenticate($request);
+            $pathname = $this->base . $request->pathname();
+            $entry    = parsePathname($pathname);
+            if ($entry instanceof Dir) {
+                $mode = $request->get('mode');
+                $view = $mode === 'viewer' ? new ImageView($this->base) : new GalleryView($this->base);
+                return new Response(
+                    200,
+                    ['Content-Type' => 'text/html'],
+                    $view->render($entry)
+                );
+            }
+            else if ($entry instanceof File)
+                return new Response(
+                    200,
+                    ['Content-Type' => $entry->mimetype()],
+                    $entry->stream()
+                );
+            else
+                throw new BadRequest();
+        } catch (Respondable $error) {
+            return $error->getResponse();
+        } catch (Throwable $error) {
+            error_log($error->getMessage());
+            return new Response(500, ['Content-Type' => 'text/plain'], 'Internal server error');
+        }
+    }
+
+    private function authenticate(Request $request): void {
+        $credentials = getenv('AUTH') ?: '';
+        if (!$credentials) return;
+        $target = 'Basic ' . base64_encode($credentials);
+        $actual = $request->header('AUTHORIZATION');
+        if ($actual !== $target)
+            throw new Unauthorised();
+    }
+}
+
 class App
 {
-    public function __construct(private readonly string $base) {}
+    private readonly Router $router;
+
+    public function __construct(private readonly string $base) {
+        $this->router = new Router($base);
+    }
 
     public function run(): void
     {
         $request  = new Request();
-        $pathname = $this->base . $request->pathname();
-        $entry    = parsePathname($pathname);
-        if ($entry instanceof Dir) {
-            $mode = $request->get('mode');
-            $view = $mode === 'viewer' ? new ImageView($this->base) : new GalleryView($this->base);
-            $response = new Response(
-                200,
-                ['Content-Type' => 'text/html'],
-                $view->render($entry)
-            );
-        }
-        else if ($entry instanceof File)
-            $response = new Response(
-                200,
-                ['Content-Type' => $entry->mimetype()],
-                $entry->stream()
-            );
-        else
-            $response = Response::badRequest();
+        $response = $this->router->route($request);
         self::writeResponse($response);
     }
 
@@ -515,7 +575,7 @@ class App
     {
         http_response_code($response->status);
         foreach ($response->headers as $k => $v)
-            header($k, $v);
+            header("{$k}: {$v}");
         if (is_string($response->body))
             echo $response->body;
         else
