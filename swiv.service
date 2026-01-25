@@ -1,0 +1,8 @@
+[Unit]
+Description=simple web image viewer
+
+[Service]
+ExecStart=/usr/bin/swiv --dir /path/to/directory --auth user:password
+
+[Install]
+WantedBy=multi-user.target
