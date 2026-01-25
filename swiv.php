@@ -477,14 +477,12 @@ class ImageView
                 height: 100vh;
                 overflow-x: scroll;
                 scrollbar-width: none;
-                scroll-snap-type: x proximity;
                 max-width: fit-content;
             }
             img {
-                height: 100vh;
-                width: 100vw;
+                min-height: 100vh;
+                min-width: 100vw;
                 object-fit: contain;
-                scroll-snap-align: center;
             }
         EOD;
     }
