@@ -345,8 +345,8 @@ class GalleryView
             }
             nav {
                 position: absolute;
-                bottom: 0;
-                right: 0;
+                bottom: 1em;
+                right: 1em;
                 background: orange;
                 z-index: 1000;
                 border-radius: 0.5em;
@@ -446,6 +446,7 @@ class ImageView
                 overflow-x: scroll;
                 scrollbar-width: none;
                 scroll-snap-type: x proximity;
+                max-width: fit-content;
             }
             img {
                 height: 100vh;
