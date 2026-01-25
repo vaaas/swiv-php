@@ -1,4 +1,12 @@
 <?php
+if (php_sapi_name() === 'cli') {
+    $dir = $argv[1];
+    $script = __FILE__;
+    chdir($dir);
+    pcntl_exec("/usr/bin/php", ["-S", "localhost:8000", __FILE__]);
+    exit();
+}
+
 /** @template T */
 class Arr implements IteratorAggregate
 {
@@ -69,6 +77,53 @@ class Arr implements IteratorAggregate
      }
 }
 
+/**
+ * @template T
+ * @implements IteratorAggregate<T>
+ */
+class Iter implements IteratorAggregate
+{
+    /** @param iterable<T> $xs */
+    public function __construct(private iterable $xs) {}
+
+    /**
+     * @template X
+     * @param Closure(): iterable<X> $f
+     * @return Iter<X>
+     */
+    public static function from(Closure $f): self
+    {
+        return new Iter($f());
+    }
+
+    /** @return Traversable<T> */
+    public function getIterator(): Traversable
+    {
+        foreach ($this->xs as $x) yield $x;
+    }
+
+    /** @return T | null */
+    public function first(): mixed
+    {
+        foreach ($this->xs as $x) return $x;
+        return null;
+    }
+
+    /**
+     * @param callable(T): bool $f
+     * @return Iter<T>
+     */
+    public function filter(callable $f): Iter
+    {
+        return Iter::from(function() use ($f) {
+            foreach ($this->xs as $x)
+            {
+                if ($f($x)) yield $x;
+            }
+        });
+    }
+}
+
 class Path
 {
     public static function relativeTo(string $base, string $pathname): string
@@ -77,6 +132,14 @@ class Path
             return substr($pathname, strlen($base));
         else
             return $pathname;
+    }
+
+    public static function join(string $a, string $b): string
+    {
+        if (str_ends_with($a, '/') || str_starts_with($b, '/'))
+            return $a . $b;
+        else
+            return $a . '/' . $b;
     }
 }
 
@@ -90,7 +153,7 @@ class Filesystem
             throw new Exception("Could not scan directory: {$pathname}");
         return Arr::of($children)
                   ->filter(fn($x) => $x !== '.' && $x !== '..')
-                  ->map(fn($x) => $pathname . '/' . $x);
+                  ->map(fn($x) => Path::join($pathname, $x));
     }
 }
 
@@ -108,11 +171,28 @@ class Dir
 {
     public function __construct(public readonly string $pathname) {}
 
+    public function basename(): string
+    {
+        return basename($this->pathname);
+    }
+
     /** @return Arr<Dir|File> */
     public function scan(): Arr
     {
         return Filesystem::scandir($this->pathname)
                          ->filterMap(parsePathname(...));
+    }
+
+    public function walk(): iterable
+    {
+        $entries = $this->scan();
+        foreach ($entries as $entry)
+        {
+            if ($entry instanceof Dir)
+                yield from $entry->scan();
+            else
+                yield $entry;
+        }
     }
 }
 
@@ -144,7 +224,7 @@ class Request
 {
     public function pathname(): string
     {
-        return $_SERVER['REQUEST_URI'];
+        return urldecode($_SERVER['REQUEST_URI']);
     }
 }
 
@@ -172,11 +252,109 @@ class Response
 
 class DirectoryView
 {
-    public static function render(Dir $dir): string
+    public function __construct(private string $base) {}
+
+    public function render(Dir $dir): string
     {
-        return $dir->scan()
-                   ->map(fn($x) => "<p>{$x->pathname}</p>")
+        $body= $dir->scan()
+                   ->map($this->renderEntry(...))
                    ->join("\n");
+        return $this->layout($body);
+    }
+
+    private function stylesheet() {
+        return <<<EOD
+            html {
+                background: black;
+                color: white;
+                overflow: hidden;
+                font-family: sans;
+            }
+            body {
+                margin: 0;
+                display: flex;
+                flex-direction: column;
+                flex-wrap: wrap;
+                height: 100vh;
+                overflow-x: scroll;
+                scrollbar-width: none;
+            }
+            article {
+                overflow-wrap: anywhere;
+                height: 25vh;
+                width: 25vh;
+                position: relative;
+                overflow: hidden;
+            }
+            a { all: unset; }
+            article img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+            }
+            article label {
+                position: absolute;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                padding: 0.5em;
+                background: #0008;
+            }
+        EOD;
+    }
+
+    private function layout(string $body): string
+    {
+        $style = $this->stylesheet();
+        return <<<EOD
+            <html>
+                <head>
+                    <meta charset='utf-8'>
+                    <meta name='viewport' content='width=device-width, initial-scale=1' />
+                    <title>swiv</title>
+                    <style>{$style}</style>
+                </head>
+                <body>{$body}</body>
+            </html>
+        EOD;
+    }
+
+    private function renderEntry(Dir | File $entry): string
+    {
+        return match ($entry::class) {
+            Dir::class => $this->renderDir($entry),
+            File::class => $this->renderFile($entry),
+            default => '',
+        };
+    }
+
+    private function renderDir(Dir $dir): string
+    {
+        /** @var File|null */
+        $firstFile = (new Iter($dir->walk()))
+            ->filter(fn($x) => $x instanceof File)
+            ->first();
+        if (is_null($firstFile)) return '';
+        $src = Path::relativeTo($this->base, $firstFile->pathname);
+        $href = Path::relativeTo($this->base, $dir->pathname);
+        return <<<EOF
+            <article>
+                <a href="{$href}">
+                    <img src="{$src}" loading='lazy'>
+                    <label>{$dir->basename()}</label>
+                </a>
+            </article>
+        EOF;
+    }
+
+    private function renderFile(File $file): string
+    {
+        $src = Path::relativeTo($this->base, $file->pathname);
+        return <<<EOF
+            <article>
+                <img src="{$src}" loading='lazy'>
+            </article>
+        EOF;
     }
 }
 
@@ -193,7 +371,7 @@ class App
             $response = new Response(
                 200,
                 ['Content-Type' => 'text/html'],
-                DirectoryView::render($entry),
+                (new DirectoryView($this->base)->render($entry))
             );
         else if ($entry instanceof File)
             $response = new Response(
