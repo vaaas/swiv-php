@@ -352,8 +352,8 @@ class GalleryView
             }
             article {
                 overflow-wrap: anywhere;
-                height: 25vh;
-                width: 25vh;
+                height: 25dvh;
+                width: 25dvh;
                 position: relative;
                 overflow: hidden;
             }
@@ -475,8 +475,8 @@ class ImageView
                 max-width: fit-content;
             }
             img {
-                height: 100dvh;
-                width: 100dvw;
+                min-height: 100dvh;
+                min-width: 100dvw;
                 object-fit: contain;
             }
         EOD;
