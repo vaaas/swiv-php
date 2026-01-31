@@ -346,7 +346,7 @@ class GalleryView
                 display: flex;
                 flex-direction: column;
                 flex-wrap: wrap;
-                height: 100vh;
+                height: 100dvh;
                 overflow-x: scroll;
                 scrollbar-width: none;
             }
@@ -441,11 +441,7 @@ class GalleryView
     private function renderFile(File $file): string
     {
         $src = Path::relativeTo($this->base, $file->pathname);
-        return <<<EOF
-            <article>
-                <img src="{$src}" loading='lazy'>
-            </article>
-        EOF;
+        return "<article><img src='{$src}' loading='lazy'></article>";
     }
 }
 
@@ -474,14 +470,13 @@ class ImageView
             body {
                 margin: 0;
                 display: flex;
-                height: 100vh;
                 overflow-x: scroll;
                 scrollbar-width: none;
                 max-width: fit-content;
             }
             img {
-                min-height: 100vh;
-                min-width: 100vw;
+                height: 100dvh;
+                width: 100dvw;
                 object-fit: contain;
             }
         EOD;
@@ -506,9 +501,7 @@ class ImageView
     private function renderEntry(File $file): string
     {
         $src = Path::relativeTo($this->base, $file->pathname);
-        return <<<EOF
-            <img src="{$src}" loading='lazy'>
-        EOF;
+        return "<img src='{$src}' loading='lazy'>";
     }
 }
 
@@ -532,7 +525,7 @@ class Router {
             else if ($entry instanceof File)
                 return new Response(
                     200,
-                    ['Content-Type' => $entry->mimetype()],
+                    [ 'Content-Type' => $entry->mimetype() ],
                     $entry->stream()
                 );
             else
