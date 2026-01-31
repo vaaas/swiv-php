@@ -2,7 +2,8 @@
 <?php
 if (php_sapi_name() === 'cli') {
     $options = getopt('', ['dir:', 'auth:', 'host:']);
-    chdir($options['dir']);
+    $success = chdir($options['dir']);
+    if (!$success) exit(1);
     pcntl_exec(
         "/usr/bin/env",
         ["php", "-S", $options['host'], __FILE__],
